@@ -793,6 +793,36 @@ class MegatronBaseModel(NLPModel):
 
         return super().setup_optimization(optim_config=optim_config, optim_kwargs=optim_kwargs)
 
+    def setup_mcore_distributed_parallel(self):
+        """Set up mcore distributed data parallel"""
+        if self.with_distributed_adam and self.use_mcore_dist_optim:
+            config = get_model_config(self.model[0] if isinstance(self.model, list) else self.model)
+            ddp_config = DistributedDataParallelConfig(
+                grad_reduce_in_fp32=(self.cfg.optim.get('grad_sync_dtype', 'fp32') == 'fp32'),
+                overlap_grad_reduce=self.cfg.optim.get('overlap_grad_sync', False),
+                use_distributed_optimizer=True,
+                check_for_nan_in_grad=self.cfg.optim.get('check_for_nan_in_grad', False),
+                # mcore bucket_size is based on num of parameters, therefore not
+                # using bucket_cap_mb to configure bucket_size here
+                bucket_size=self.cfg.optim.get('ddp_bucket_size', None),
+            )
+            self.model = [
+                McoreDDP(
+                    config,
+                    ddp_config,
+                    model_chunk,
+                    data_parallel_group=parallel_state.get_data_parallel_group(with_context_parallel=True),
+                    expert_data_parallel_group=parallel_state.get_data_modulo_expert_parallel_group(),
+                    # Turn off bucketing for model_chunk 2 onwards, since communication for these
+                    # model chunks is overlapped with compute anyway.
+                    disable_bucketing=(model_chunk_idx > 0),
+                )
+                for (model_chunk_idx, model_chunk) in enumerate(self.model)
+            ]
+
+            # (TODO) Broadcast params from data parallel src rank to other data parallel ranks.
+            # by calling model_module.broadcast_params() if the model is randomly initialized.
+
     def configure_optimizers(self):
         self.setup_optimization()
 
