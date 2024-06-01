@@ -185,6 +185,7 @@ class NLPDDPStrategy(DDPStrategy):
         nccl_communicator_config_path: Optional[str] = None,
         sharp: bool = False,
         dist_ckpt_parallel_save: bool = False,
+        distributed_timeout_minutes: Optional[Union[int, float]] = None,
         **kwargs: Union[Any, Dict[str, Any]],
     ) -> None:
         if not HAVE_APEX:
@@ -202,6 +203,7 @@ class NLPDDPStrategy(DDPStrategy):
         self.nccl_communicator_config_path = nccl_communicator_config_path
         self.sharp = sharp
         self._dist_ckpt_parallel_save = dist_ckpt_parallel_save
+        self.distributed_timeout_minutes = distributed_timeout_minutes
 
     def setup(self, trainer: "pl.Trainer") -> None:
         """
@@ -229,10 +231,13 @@ class NLPDDPStrategy(DDPStrategy):
             app_state = AppState()
 
             if app_state.model_parallel_size is not None:
+                distributed_timeout_minutes = (
+                    self._timeout.total_seconds() / 60
+                ) if self.distributed_timeout_minutes is None else self.distributed_timeout_minutes
                 init_model_parallel(
                     self.sharp,
                     self.nccl_communicator_config_path,
-                    distributed_timeout_minutes=self._timeout.total_seconds() / 60,
+                    distributed_timeout_minutes=distributed_timeout_minutes
                 )
 
     def configure_ddp(self):
